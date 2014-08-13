@@ -11,6 +11,7 @@ import io.dropwizard.logging.SyslogAppenderFactory;
 import io.dropwizard.setup.Environment;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URL;
 import java.net.URLConnection;
@@ -22,6 +23,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import javax.validation.Validation;
 import javax.validation.Validator;
 import javax.ws.rs.GET;
@@ -31,7 +35,10 @@ import javax.ws.rs.Produces;
 import org.eclipse.jetty.server.AbstractNetworkConnector;
 import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.NetworkConnector;
+import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.handler.AbstractHandler;
+import org.eclipse.jetty.server.handler.ErrorHandler;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -42,21 +49,27 @@ import com.google.common.io.CharStreams;
 import com.google.common.io.Resources;
 
 public class DefaultServerFactoryTest {
+    private ObjectMapper objectMapper;
     private DefaultServerFactory http;
 
     @Before
     public void setUp() throws Exception {
-        final ObjectMapper objectMapper = Jackson.newObjectMapper();
+        objectMapper = Jackson.newObjectMapper();
         objectMapper.getSubtypeResolver().registerSubtypes(ConsoleAppenderFactory.class,
                                                            FileAppenderFactory.class,
                                                            SyslogAppenderFactory.class,
                                                            HttpConnectorFactory.class);
 
-        this.http = new ConfigurationFactory<>(DefaultServerFactory.class,
+        this.http = buildServerFactory("yaml/server.yml");
+    }
+
+
+    protected DefaultServerFactory buildServerFactory(String filename) throws Exception {
+        return new ConfigurationFactory<>(DefaultServerFactory.class,
                                                Validation.buildDefaultValidatorFactory()
                                                                  .getValidator(),
                                                objectMapper, "dw")
-                .build(new File(Resources.getResource("yaml/server.yml").toURI()));
+                .build(new File(Resources.getResource(filename).toURI()));
     }
 
     @Test
@@ -81,6 +94,20 @@ public class DefaultServerFactoryTest {
     public void isDiscoverable() throws Exception {
         assertThat(new DiscoverableSubtypeResolver().getDiscoveredSubtypes())
                 .contains(DefaultServerFactory.class);
+    }
+
+    @Test
+    public void testDefaultErrorHandler() throws Exception {
+        assertThat(http.getErrorHandlerClass())
+                .isEqualTo(ErrorHandler.class);
+    }
+
+    @Test
+    public void testConfigurableErrorHandler() throws Exception {
+        this.http = buildServerFactory("yaml/error-handler.yml");
+
+        assertThat(http.getErrorHandlerClass())
+                 .isEqualTo(MyErrorHandler.class);
     }
 
     @Ignore("Issue #648: Test is flaky and should be re-activated after upgrade to Jetty 9.1 or higher.")
@@ -179,6 +206,12 @@ public class DefaultServerFactoryTest {
             requestReceived.countDown();
             shutdownInvoked.await();
             return "test";
+        }
+    }
+
+    public static class MyErrorHandler extends AbstractHandler {
+        @Override
+        public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {
         }
     }
 }

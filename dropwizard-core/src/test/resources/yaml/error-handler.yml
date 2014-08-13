@@ -1,0 +1,2 @@
+
+errorHandlerClass: io.dropwizard.server.DefaultServerFactoryTest$MyErrorHandler

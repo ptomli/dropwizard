@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Charsets;
 import com.google.common.base.Joiner;
 import com.google.common.io.Resources;
+
 import io.dropwizard.jersey.filter.AllowedMethodsFilter;
 import io.dropwizard.jersey.jackson.JacksonMessageBodyProvider;
 import io.dropwizard.jersey.setup.JerseyEnvironment;
@@ -25,8 +26,10 @@ import io.dropwizard.servlets.ThreadNameFilter;
 import io.dropwizard.util.Duration;
 import io.dropwizard.validation.MinDuration;
 import io.dropwizard.validation.ValidationMethod;
+
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.handler.AbstractHandler;
 import org.eclipse.jetty.server.handler.ErrorHandler;
 import org.eclipse.jetty.server.handler.RequestLogHandler;
 import org.eclipse.jetty.server.handler.StatisticsHandler;
@@ -45,6 +48,7 @@ import javax.validation.Valid;
 import javax.validation.Validator;
 import javax.validation.constraints.Min;
 import javax.validation.constraints.NotNull;
+
 import java.io.IOException;
 import java.util.EnumSet;
 import java.util.Set;
@@ -173,6 +177,13 @@ import java.util.regex.Pattern;
  *             405 Method Not Allowed response.
  *         </td>
  *     </tr>
+ *     <tr>
+ *         <td>{@code errorHandlerClass}</td>
+ *         <td>{@code org.eclipse.jetty.server.handler.ErrorHandler}</td>
+ *         <td>
+ *             The class name of the Jetty error handler.
+ *         </td>
+ *     </tr>
  * </table>
  *
  * @see DefaultServerFactory
@@ -223,6 +234,9 @@ public abstract class AbstractServerFactory implements ServerFactory {
 
     @NotNull
     private Set<String> allowedMethods = AllowedMethodsFilter.DEFAULT_ALLOWED_METHODS;
+
+    @NotNull
+    private Class<? extends AbstractHandler> errorHandlerClass = ErrorHandler.class;
 
     @JsonIgnore
     @ValidationMethod(message = "must have a smaller minThreads than maxThreads")
@@ -390,6 +404,16 @@ public abstract class AbstractServerFactory implements ServerFactory {
         this.allowedMethods = allowedMethods;
     }
 
+    @JsonProperty
+    public Class<? extends AbstractHandler> getErrorHandlerClass() {
+        return errorHandlerClass;
+    }
+
+    @JsonProperty
+    public void setErrorHandlerClass(Class<? extends AbstractHandler> errorHandlerClass) {
+        this.errorHandlerClass = errorHandlerClass;
+    }
+
     protected Handler createAdminServlet(Server server,
                                          MutableServletContextHandler handler,
                                          MetricRegistry metrics,
@@ -447,15 +471,29 @@ public abstract class AbstractServerFactory implements ServerFactory {
         return threadPool;
     }
 
+    protected AbstractHandler createErrorHandler(Server server) {
+        try {
+            final AbstractHandler handler = errorHandlerClass.newInstance();
+            if (handler instanceof ErrorHandler) {
+                ((ErrorHandler) handler).setShowStacks(true);
+            }
+            handler.setServer(server);
+            return handler;
+        }
+        catch (IllegalAccessException ex) {
+            throw new IllegalArgumentException("Failed to create error handler", ex);
+        }
+        catch (InstantiationException ex) {
+           throw new IllegalArgumentException("Failed to create error handler", ex);
+        }
+    }
+
     protected Server buildServer(LifecycleEnvironment lifecycle,
                                  ThreadPool threadPool) {
         final Server server = new Server(threadPool);
         server.addLifeCycleListener(buildSetUIDListener());
         lifecycle.attach(server);
-        final ErrorHandler errorHandler = new ErrorHandler();
-        errorHandler.setServer(server);
-        errorHandler.setShowStacks(false);
-        server.addBean(errorHandler);
+        server.addBean(createErrorHandler(server));
         server.setStopAtShutdown(true);
         server.setStopTimeout(shutdownGracePeriod.toMilliseconds());
         return server;
